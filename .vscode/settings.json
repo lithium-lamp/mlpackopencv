@@ -1,6 +1,7 @@
 {
     "C_Cpp.errorSquiggles": "enabled",
     "files.associations": {
-        "armadillo": "cpp"
+        "armadillo": "cpp",
+        "__locale": "cpp"
     }
 }
