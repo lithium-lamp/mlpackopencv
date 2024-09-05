@@ -1,1 +1,4 @@
 mlcvcombo.o
+trainingdata/cropped/*
+trainingdata/partialmask/*
+trainingdata/mask/*

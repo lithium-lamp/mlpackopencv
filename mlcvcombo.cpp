@@ -2,16 +2,17 @@
 #include <mlpack.hpp>
 #include <opencv2/opencv.hpp>
 
-int hHighL = 250; //half the highlight distance, arbitrary dimension
 
-int iLowH = 8;
-int iHighH = 10;
+int hHighL = 300; //half the highlight distance, arbitrary dimension
 
-int iLowS = 79; 
-int iHighS = 138;
+int iLowH = 2;
+int iHighH = 12;
 
-int iLowV = 127;
-int iHighV = 255;
+int iLowS = 77; 
+int iHighS = 153;
+
+int iLowV = 93;
+int iHighV = 237;
 
 arma::mat cvToArma(const cv::Mat& m) {
     arma::mat arma_mat( reinterpret_cast<double*>(m.data), m.rows, m.cols );
@@ -35,7 +36,7 @@ void mlModel(const arma::mat& data) { //ml model to be called after image has be
     }
 }
 
-cv::Mat contour_frame(cv::Mat frame) {
+cv::Mat contour_frame(const cv::Mat& frame) {
     cv::Mat imgHSV;
 
     cvtColor(frame, imgHSV, cv::COLOR_BGR2HSV);
@@ -47,12 +48,55 @@ cv::Mat contour_frame(cv::Mat frame) {
     cv::erode(imgThresholded, imgThresholded, cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(5, 5)));
     cv::dilate(imgThresholded, imgThresholded, cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(5, 5))); 
 
-    cv::dilate( imgThresholded, imgThresholded, cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(5, 5)) ); 
+    cv::dilate(imgThresholded, imgThresholded, cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(5, 5)) ); 
     cv::erode(imgThresholded, imgThresholded, cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(5, 5)) );
 
     return imgThresholded;
 }
-  
+
+bool createPartialImage(const cv::Mat& video_from_facecam, const cv::Mat& imgThresholded, cv::Mat& subimg1, cv::Mat& subimg2, cv::Mat& subimg3) {    
+    cv::Moments oMoments = cv::moments(imgThresholded);
+
+    double dM01 = oMoments.m01;
+    double dM10 = oMoments.m10;
+    double dArea = oMoments.m00;
+
+    if (dArea <= 10000)
+        return false;
+
+    int posX = dM10 / dArea;
+    int posY = dM01 / dArea;
+
+    posY -= 100; //arbitrary offset, adjusting for neck area relative to head.
+
+    const int x1 = posX - hHighL;
+    const int x2 = posX + hHighL;
+
+    const int y1 = posY - hHighL;
+    const int y2 = posY + hHighL;
+
+    if (x1 <= 0 || y1 <= 0)
+        return false;
+    
+    if (x2 >= video_from_facecam.size().width || y2 >= video_from_facecam.size().height)
+        return false;
+
+    cv::Mat thresh_color;
+
+    cv::cvtColor(imgThresholded, thresh_color, cv::COLOR_GRAY2RGB);
+
+    //for obtaining area as seen by mask
+    cv::Mat partialmask;
+
+    cv::bitwise_and(video_from_facecam, thresh_color, partialmask);
+
+    subimg1 = video_from_facecam(cv::Range(y1, y2), cv::Range(x1, x2));
+    subimg2 = partialmask(cv::Range(y1, y2), cv::Range(x1, x2));
+    subimg3 = thresh_color(cv::Range(y1, y2), cv::Range(x1, x2));
+
+    return true;
+}
+
 int main() { 
     cv::Mat video_from_facecam;
 
@@ -79,6 +123,10 @@ int main() {
     cv::Mat imgTmp;
     cap.read(imgTmp); 
 
+    cv::Mat subimg1;
+    cv::Mat subimg2;
+    cv::Mat subimg3;
+
     while (char (cv::waitKey(1)) != 'q') {
         int64 t1 = cv::getTickCount();
         double secs = (t1-t0)/cv::getTickFrequency();
@@ -89,65 +137,29 @@ int main() {
             break; 
         }
 
-        if (int(secs) == 10) { //triggers once every ~10 seconds
-            t0 = t1;
-            
-            //arma::mat converted = cvToArma(contour_frame(video_from_facecam));
-        
-            //mlModel(converted);
-        }
-
         cv::Mat imgThresholded = contour_frame(video_from_facecam);
 
-        cv::Moments oMoments = cv::moments(imgThresholded);
+        bool createdSuccess = false;
 
-        double dM01 = oMoments.m01;
-        double dM10 = oMoments.m10;
-        double dArea = oMoments.m00;
+        if (createPartialImage(video_from_facecam, imgThresholded, 
+                                    subimg1, subimg2, subimg3)) {
+            createdSuccess = true;
+        }
 
-        cv::Mat thresh_color;
+        if (int(secs) >= 1) { //triggers once every ~10 seconds
+            t0 = t1;
 
-        cv::cvtColor(imgThresholded, thresh_color, cv::COLOR_GRAY2RGB);
-
-        cv::Mat out;
-
-        cv::bitwise_and(video_from_facecam, thresh_color, out);
-
-        cv::Mat subImg = cv::Mat::zeros(hHighL * 2, hHighL * 2, CV_64F);
-
-        if (dArea > 10000) {
-            int posX = dM10 / dArea;
-            int posY = dM01 / dArea;
-
-            posY -= 100; //arbitrary offset
-                
-            if (posX >= 0 && posY >= 0) {
-                const int x1 = posX - hHighL;
-                const int x2 = posX + hHighL;
-
-                const int y1 = posY - hHighL;
-                const int y2 = posY + hHighL;
-
-                if (x1 < 0 || x2 < 0 || y1 < 0 || y2 < 0) {
-                    
-                }
-                if (x1 > imgTmp.size().width || x2 > imgTmp.size().width || y1 > imgTmp.size().height || y2 > imgTmp.size().height) {
-                    
-                }
-                else {
-                    subImg = video_from_facecam(cv::Range(y1, y2), cv::Range(x1, x2));
-                    //cv::Mat subImg = out(cv::Range(y1, y2), cv::Range(x1, x2));
-                }
+            if (createdSuccess) {
+                int val = std::rand() % 10;
+                imwrite("trainingdata/cropped/" + std::to_string(val) + ".png", subimg1);
+                imwrite("trainingdata/partialmask/" + std::to_string(val) + ".png", subimg2);
+                imwrite("trainingdata/mask/" + std::to_string(val) + ".png", subimg3);
             }
         }
 
+        imshow("Cropped", subimg1);
 
-
-        imshow("Highlighted", subImg);
-
-        //imshow("Contour Frame", imgThresholded);
-
-        //imshow("Highlighted", video_from_facecam + imgLines);
+        imshow("Contour Frame", imgThresholded);
     }
 
     cap.release();
